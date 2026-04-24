@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 description = "Tunnel UDP traffic inside a TCP stream. Each datagram is prefixed with a 16 bit unsigned integer containing the length"
 repository = "https://github.com/mullvad/udp-over-tcp"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 publish = false
 
 [[bin]]
@@ -39,4 +39,4 @@ env_logger = { version = "0.11.3", optional = true }
 cadence = { version = "1.0.0", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.27.1", features = ["socket"] }
+nix = { version = "0.31.2", features = ["socket"] }
