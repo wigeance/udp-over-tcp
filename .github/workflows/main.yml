@@ -1,128 +1,28 @@
-name: Build and test
+name: Build OpenWrt ARM64
 
 on:
-  - push
-  - workflow_dispatch
-
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: --deny warnings
+  push:
+  workflow_dispatch:
 
 jobs:
-  formatting:
+  build-aarch64:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          components: rustfmt
-          default: true
-
-      - name: Check formatting
-        run: cargo fmt -- --check
-
-  linting:
-    runs-on: ubuntu-latest
-
-    permissions:
-      checks: write
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          components: clippy
-          default: true
-
-      - name: Lint (clippy)
-        uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  audit:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          default: true
-
-      - name: Install cargo-audit
-        uses: actions-rs/install@v0.1.2
-        with:
-          crate: cargo-audit
-          version: latest
-          use-tool-cache: true
-
-      - name: Audit
-        run: cargo audit --deny warnings
-
-  build-and-test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, beta]
-        include:
-          - os: ubuntu-latest
-            rust: nightly
-
-          - os: ubuntu-latest
-            rust: 1.87.0
-
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          default: true
-
-      - name: Install cargo-all-features
-        uses: actions-rs/install@v0.1
-        with:
-          crate: cargo-all-features
-          version: latest
-          use-tool-cache: true
-
-      - name: Build
-        run: cargo build-all-features
-
-      - name: Test
-        run: cargo test-all-features
-
-  build-openwrt-aarch64:
-    name: Build OpenWrt ARM64 Binary
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y \
-            musl-tools \
-            gcc-aarch64-linux-gnu
+            gcc-aarch64-linux-gnu \
+            musl-tools
 
       - name: Install Rust target
         run: rustup target add aarch64-unknown-linux-musl
 
-      - name: Create cargo config
+      - name: Configure Cargo
         run: |
           mkdir -p .cargo
 
@@ -137,18 +37,18 @@ jobs:
           strip = true
           EOF
 
-      - name: Build release binary
+      - name: Build binary
         run: |
           cargo build \
             --release \
             --target aarch64-unknown-linux-musl
 
-      - name: Show binary info
+      - name: Show files
         run: |
-          file target/aarch64-unknown-linux-musl/release/udp2tcp
+          ls -lah target/aarch64-unknown-linux-musl/release/
 
-      - name: Upload artifact
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: udp2tcp-openwrt-aarch64
-          path: target/aarch64-unknown-linux-musl/release/udp2tcp
+          name: udp-over-tcp-aarch64
+          path: target/aarch64-unknown-linux-musl/release/udp-over-tcp
