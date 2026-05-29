@@ -67,8 +67,10 @@ pub struct CongestionControlError {
 #[derive(Debug)]
 enum CongestionControlErrorKind {
     /// Failed to set the congestion control algorithm
+    #[cfg(target_os = "linux")]
     SetAlgorithm(String, io::Error),
     /// Failed to get/verify the congestion control algorithm
+    #[cfg(target_os = "linux")]
     GetAlgorithm(io::Error),
     /// System does not support congestion control (not on Linux)
     NotSupported,
@@ -77,9 +79,11 @@ enum CongestionControlErrorKind {
 impl fmt::Display for CongestionControlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
+            #[cfg(target_os = "linux")]
             CongestionControlErrorKind::SetAlgorithm(algo, e) => {
                 write!(f, "Failed to set TCP congestion control to '{}': {}", algo, e)
             }
+            #[cfg(target_os = "linux")]
             CongestionControlErrorKind::GetAlgorithm(e) => {
                 write!(f, "Failed to get TCP congestion control algorithm: {}", e)
             }
@@ -94,6 +98,28 @@ impl fmt::Display for CongestionControlError {
 }
 
 impl std::error::Error for CongestionControlError {}
+
+/// Trait to get raw socket file descriptor
+#[cfg(target_os = "linux")]
+pub trait AsRawSocketFd {
+    fn as_raw_socket_fd(&self) -> std::os::unix::io::RawFd;
+}
+
+#[cfg(target_os = "linux")]
+impl AsRawSocketFd for tokio::net::TcpSocket {
+    fn as_raw_socket_fd(&self) -> std::os::unix::io::RawFd {
+        use std::os::unix::io::AsRawFd;
+        self.as_raw_fd()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl AsRawSocketFd for tokio::net::TcpStream {
+    fn as_raw_socket_fd(&self) -> std::os::unix::io::RawFd {
+        use std::os::unix::io::AsRawFd;
+        self.as_raw_fd()
+    }
+}
 
 /// Sets the TCP congestion control algorithm on a socket
 ///
@@ -128,8 +154,8 @@ pub fn set_algorithm<S: AsRawSocketFd>(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn set_algorithm<S: AsRawSocketFd>(
-    _socket: &S,
+pub fn set_algorithm(
+    _socket: &(),
     _algorithm: Algorithm,
 ) -> Result<(), CongestionControlError> {
     Err(CongestionControlError {
@@ -174,50 +200,23 @@ pub fn get_algorithm<S: AsRawSocketFd>(socket: &S) -> Result<String, CongestionC
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn get_algorithm<S: AsRawSocketFd>(_socket: &S) -> Result<String, CongestionControlError> {
+pub fn get_algorithm(_socket: &()) -> Result<String, CongestionControlError> {
     Err(CongestionControlError {
         kind: CongestionControlErrorKind::NotSupported,
     })
 }
 
-/// Trait to get raw socket file descriptor
-#[cfg(target_os = "linux")]
-pub trait AsRawSocketFd {
-    fn as_raw_socket_fd(&self) -> std::os::unix::io::RawFd;
+#[test]
+fn test_algorithm_display() {
+    assert_eq!(Algorithm::Bbr.to_string(), "bbr");
+    assert_eq!(Algorithm::Cubic.to_string(), "cubic");
+    assert_eq!(Algorithm::Reno.to_string(), "reno");
 }
 
-#[cfg(target_os = "linux")]
-impl AsRawSocketFd for tokio::net::TcpSocket {
-    fn as_raw_socket_fd(&self) -> std::os::unix::io::RawFd {
-        use std::os::unix::io::AsRawFd;
-        self.as_raw_fd()
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl AsRawSocketFd for tokio::net::TcpStream {
-    fn as_raw_socket_fd(&self) -> std::os::unix::io::RawFd {
-        use std::os::unix::io::AsRawFd;
-        self.as_raw_fd()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_algorithm_display() {
-        assert_eq!(Algorithm::Bbr.to_string(), "bbr");
-        assert_eq!(Algorithm::Cubic.to_string(), "cubic");
-        assert_eq!(Algorithm::Reno.to_string(), "reno");
-    }
-
-    #[test]
-    fn test_algorithm_from_str() {
-        assert_eq!("bbr".parse::<Algorithm>().unwrap(), Algorithm::Bbr);
-        assert_eq!("CUBIC".parse::<Algorithm>().unwrap(), Algorithm::Cubic);
-        assert_eq!("reno".parse::<Algorithm>().unwrap(), Algorithm::Reno);
-        assert!("invalid".parse::<Algorithm>().is_err());
-    }
+#[test]
+fn test_algorithm_from_str() {
+    assert_eq!("bbr".parse::<Algorithm>().unwrap(), Algorithm::Bbr);
+    assert_eq!("CUBIC".parse::<Algorithm>().unwrap(), Algorithm::Cubic);
+    assert_eq!("reno".parse::<Algorithm>().unwrap(), Algorithm::Reno);
+    assert!("invalid".parse::<Algorithm>().is_err());
 }
