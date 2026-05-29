@@ -21,6 +21,15 @@
 //! The format of the data inside the TCP stream is very simple. Each datagram is preceded
 //! with a 16 bit unsigned integer in big endian byte order, specifying the length of the datagram.
 //!
+//! # Congestion Control
+//!
+//! On Linux systems, this library automatically attempts to use BBR (Bottleneck Bandwidth and
+//! Round-trip time) congestion control for better throughput and lower latency. If BBR is not
+//! available on the system, it falls back to the system default algorithm.
+//!
+//! You can explicitly specify a congestion control algorithm using the `--congestion-control`
+//! flag with values: `bbr`, `cubic`, or `reno`.
+//!
 //! # tcp2udp server example
 //!
 //! Make the server listen for TCP connections that it can then forward to a local UDP service.
@@ -90,6 +99,9 @@ mod exponential_backoff;
 mod forward_traffic;
 mod logging;
 mod tcp_options;
+
+#[cfg(target_os = "linux")]
+pub mod congestion_control;
 
 pub use tcp_options::{ApplyTcpOptionsError, ApplyTcpOptionsErrorKind, TcpOptions};
 
