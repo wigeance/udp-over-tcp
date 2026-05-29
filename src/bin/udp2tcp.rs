@@ -10,6 +10,8 @@ use udp_over_tcp::udp2tcp;
 #[command(
     name = "udp2tcp",
     about = "Listen for incoming UDP and forward to TCP",
+    long_about = "Listen for incoming UDP datagrams and forward them over a TCP stream.\n\
+                  On Linux, uses BBR congestion control by default for better throughput and latency.",
     version
 )]
 pub struct Options {
