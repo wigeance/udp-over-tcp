@@ -5,6 +5,8 @@ use std::io;
 use std::time::Duration;
 use tokio::net::{TcpSocket, TcpStream};
 
+use crate::congestion_control::Algorithm;
+
 /// Options to apply to the TCP socket involved in the tunneling.
 #[derive(Debug, Default, Clone)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
@@ -33,6 +35,18 @@ pub struct TcpOptions {
     /// Enables TCP_NODELAY on the TCP socket.
     #[cfg_attr(feature = "clap", arg(long))]
     pub nodelay: bool,
+
+    /// TCP congestion control algorithm to use (Linux only).
+    /// Defaults to BBR if available, otherwise the system default.
+    /// Supported values: bbr, cubic, reno
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(feature = "clap", arg(long = "congestion-control", value_parser = parse_algorithm))]
+    pub congestion_control: Option<Algorithm>,
+}
+
+#[cfg(feature = "clap")]
+fn parse_algorithm(s: &str) -> Result<crate::congestion_control::Algorithm, String> {
+    s.parse()
 }
 
 /// Represents a failure to apply socket options to the TCP socket.
@@ -46,6 +60,8 @@ enum ApplyTcpOptionsErrorInternal {
     #[cfg(target_os = "linux")]
     Mark(nix::Error),
     TcpNoDelay(io::Error),
+    #[cfg(target_os = "linux")]
+    CongestionControl(crate::congestion_control::CongestionControlError),
 }
 
 /// A list specifying what failed when applying the TCP options.
@@ -64,6 +80,10 @@ pub enum ApplyTcpOptionsErrorKind {
 
     /// Failed to get/set TCP_NODELAY
     TcpNoDelay,
+
+    /// Failed to set TCP congestion control algorithm
+    #[cfg(target_os = "linux")]
+    CongestionControl,
 }
 
 impl ApplyTcpOptionsError {
@@ -76,6 +96,8 @@ impl ApplyTcpOptionsError {
             #[cfg(target_os = "linux")]
             Mark(_) => ApplyTcpOptionsErrorKind::Mark,
             TcpNoDelay(_) => ApplyTcpOptionsErrorKind::TcpNoDelay,
+            #[cfg(target_os = "linux")]
+            CongestionControl(_) => ApplyTcpOptionsErrorKind::CongestionControl,
         }
     }
 }
@@ -89,12 +111,14 @@ impl From<ApplyTcpOptionsErrorInternal> for ApplyTcpOptionsError {
 impl fmt::Display for ApplyTcpOptionsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ApplyTcpOptionsErrorInternal::*;
-        match self.0 {
+        match &self.0 {
             RecvBuffer(_) => "Failed to get/set TCP_RCVBUF",
             SendBuffer(_) => "Failed to get/set TCP_SNDBUF",
             #[cfg(target_os = "linux")]
             Mark(_) => "Failed to get/set SO_MARK",
             TcpNoDelay(_) => "Failed to get/set TCP_NODELAY",
+            #[cfg(target_os = "linux")]
+            CongestionControl(e) => return write!(f, "{}", e),
         }
         .fmt(f)
     }
@@ -109,6 +133,8 @@ impl std::error::Error for ApplyTcpOptionsError {
             #[cfg(target_os = "linux")]
             Mark(e) => Some(e),
             TcpNoDelay(e) => Some(e),
+            #[cfg(target_os = "linux")]
+            CongestionControl(e) => Some(e),
         }
     }
 }
@@ -153,6 +179,20 @@ pub fn apply(socket: &TcpSocket, options: &TcpOptions) -> Result<(), ApplyTcpOpt
             "SO_MARK: {}",
             getsockopt(&socket, sockopt::Mark).map_err(ApplyTcpOptionsErrorInternal::Mark)?
         );
+
+        if let Some(algorithm) = options.congestion_control {
+            crate::congestion_control::set_algorithm(socket, algorithm)
+                .map_err(ApplyTcpOptionsErrorInternal::CongestionControl)?;
+        } else {
+            // Try to set BBR by default on Linux if not specified
+            match crate::congestion_control::set_algorithm(socket, Algorithm::Bbr) {
+                Ok(()) => {},
+                Err(_) => {
+                    log::debug!("BBR congestion control not available, using system default");
+                    // Fall through to system default
+                }
+            }
+        }
     }
     Ok(())
 }
