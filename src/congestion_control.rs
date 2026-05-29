@@ -11,6 +11,9 @@ use std::io;
 #[cfg(target_os = "linux")]
 use nix::sys::socket::{getsockopt, setsockopt, sockopt};
 
+#[cfg(target_os = "linux")]
+use std::ffi::OsString;
+
 /// Supported TCP congestion control algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -157,17 +160,19 @@ pub fn set_algorithm<S: AsRawSocketFd>(
     socket: &S,
     algorithm: Algorithm,
 ) -> Result<(), CongestionControlError> {
-    let algo_str = algorithm.as_str();
+    let algo_str = OsString::from(algorithm.as_str());
 
-    setsockopt(socket.as_raw_socket_fd(), sockopt::TcpCongestion, algo_str)
-        .map_err(|e| CongestionControlError {
-            kind: CongestionControlErrorKind::SetAlgorithm(
-                algo_str.to_string(),
-                io::Error::from_raw_os_error(
-                    e.as_errno().map(|n| n as i32).unwrap_or(1),
-                ),
-            ),
-        })?;
+    setsockopt(
+        socket.as_raw_socket_fd(),
+        sockopt::TcpCongestion,
+        &algo_str,
+    )
+    .map_err(|e| CongestionControlError {
+        kind: CongestionControlErrorKind::SetAlgorithm(
+            algorithm.as_str().to_string(),
+            io::Error::from_raw_os_error(e as i32),
+        ),
+    })?;
 
     log::debug!("Set TCP congestion control to: {}", algorithm);
 
@@ -205,9 +210,7 @@ pub fn get_algorithm<S: AsRawSocketFd>(
     getsockopt(socket.as_raw_socket_fd(), sockopt::TcpCongestion)
         .map_err(|e| CongestionControlError {
             kind: CongestionControlErrorKind::GetAlgorithm(
-                io::Error::from_raw_os_error(
-                    e.as_errno().map(|n| n as i32).unwrap_or(1),
-                ),
+                io::Error::from_raw_os_error(e as i32),
             ),
         })
         .map(|cstr| cstr.to_string_lossy().into_owned())
