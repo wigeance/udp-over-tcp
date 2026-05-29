@@ -9,16 +9,7 @@ use std::fmt;
 use std::io;
 
 #[cfg(target_os = "linux")]
-use nix::sys::socket::{getsockopt, setsockopt};
-
-#[cfg(target_os = "linux")]
-use nix::sys::socket::sockopt;
-
-#[cfg(target_os = "linux")]
-use std::ffi::OsString;
-
-#[cfg(target_os = "linux")]
-use std::os::fd::AsFd;
+use std::ffi::{CStr, CString};
 
 /// Supported TCP congestion control algorithms
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,7 +117,7 @@ impl std::error::Error for CongestionControlError {}
 ///
 /// Implemented for `tokio::net::TcpSocket` and `tokio::net::TcpStream` on Linux.
 #[cfg(target_os = "linux")]
-pub trait AsRawSocketFd: AsFd {
+pub trait AsRawSocketFd {
     fn as_raw_socket_fd(&self) -> std::os::unix::io::RawFd;
 }
 
@@ -166,16 +157,35 @@ pub fn set_algorithm<S: AsRawSocketFd>(
     socket: &S,
     algorithm: Algorithm,
 ) -> Result<(), CongestionControlError> {
-    let algo = OsString::from(algorithm.as_str());
+    const TCP_CONGESTION: libc::c_int = 13;
 
-    setsockopt(socket, sockopt::TcpCongestion, &algo).map_err(|e| {
+    let algo = CString::new(algorithm.as_str()).map_err(|e| {
         CongestionControlError {
             kind: CongestionControlErrorKind::SetAlgorithm(
                 algorithm.as_str().to_string(),
-                io::Error::from_raw_os_error(e as i32),
+                io::Error::new(io::ErrorKind::InvalidInput, e),
             ),
         }
     })?;
+
+    let ret = unsafe {
+        libc::setsockopt(
+            socket.as_raw_socket_fd(),
+            libc::IPPROTO_TCP,
+            TCP_CONGESTION,
+            algo.as_ptr() as *const libc::c_void,
+            algo.as_bytes_with_nul().len() as libc::socklen_t,
+        )
+    };
+
+    if ret != 0 {
+        return Err(CongestionControlError {
+            kind: CongestionControlErrorKind::SetAlgorithm(
+                algorithm.as_str().to_string(),
+                io::Error::last_os_error(),
+            ),
+        });
+    }
 
     log::debug!("Set TCP congestion control to: {}", algorithm);
 
@@ -210,13 +220,41 @@ pub fn set_algorithm<S>(
 pub fn get_algorithm<S: AsRawSocketFd>(
     socket: &S,
 ) -> Result<String, CongestionControlError> {
-    getsockopt(socket, sockopt::TcpCongestion)
-        .map_err(|e| CongestionControlError {
+    const TCP_CONGESTION: libc::c_int = 13;
+
+    let mut buf = [0u8; 256];
+    let mut len = buf.len() as libc::socklen_t;
+
+    let ret = unsafe {
+        libc::getsockopt(
+            socket.as_raw_socket_fd(),
+            libc::IPPROTO_TCP,
+            TCP_CONGESTION,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            &mut len,
+        )
+    };
+
+    if ret != 0 {
+        return Err(CongestionControlError {
             kind: CongestionControlErrorKind::GetAlgorithm(
-                io::Error::from_raw_os_error(e as i32),
+                io::Error::last_os_error(),
             ),
-        })
-        .map(|os_string| os_string.to_string_lossy().into_owned())
+        });
+    }
+
+    let cstr = CStr::from_bytes_until_nul(&buf).map_err(|_| {
+        CongestionControlError {
+            kind: CongestionControlErrorKind::GetAlgorithm(
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid congestion control string",
+                ),
+            ),
+        }
+    })?;
+
+    Ok(cstr.to_string_lossy().into_owned())
 }
 
 #[cfg(not(target_os = "linux"))]
